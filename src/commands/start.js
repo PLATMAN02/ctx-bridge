@@ -3,7 +3,6 @@
 import { readMessages } from '../readers/index.js';
 import { writeConfig } from '../config.js';
 import { startWatcher } from '../watcher.js';
-import { getGeminiKey, promptAndSaveGeminiKey } from '../key-store.js';
 
 export async function run(opts = {}) {
   const snapshotInterval = parseInt(opts.interval ?? '10', 10);
@@ -11,14 +10,6 @@ export async function run(opts = {}) {
 
   console.log('\n  ctx — Context Bridge\n');
   console.log(`  Project: ${projectPath}`);
-
-  // Ensure Gemini key is present before monitoring starts
-  const apiKey = await getGeminiKey();
-  if (!apiKey) {
-    await promptAndSaveGeminiKey();
-  } else {
-    console.log('  Gemini API key: found ✓');
-  }
 
   // Auto-detect IDE
   let ide = 'unknown';
@@ -43,6 +34,5 @@ export async function run(opts = {}) {
 
   console.log('  Monitoring started. Press Ctrl+C to stop.\n');
 
-  // Runs indefinitely via setInterval inside startWatcher
   await startWatcher(ide, projectPath, snapshotInterval);
 }

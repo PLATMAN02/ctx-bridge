@@ -6,7 +6,6 @@
   "type": "module",
   "dependencies": {
     "commander": "^11.0.0",
-    "clipboardy": "^4.0.0",
-    "@google/generative-ai": "^0.21.0"
+    "clipboardy": "^4.0.0"
   }
 }

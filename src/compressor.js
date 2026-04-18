@@ -1,94 +1,101 @@
-// Compresses chat messages + git state into a dense handoff prompt via Gemini API
+// Compresses chat messages + git state into a handoff prompt using local heuristics (no API)
 
-import { GoogleGenerativeAI } from '@google/generative-ai';
-import { getGeminiKey } from './key-store.js';
+// Patterns that suggest a task description in user messages
+const TASK_PATTERNS = [
+  /\b(build|create|add|fix|implement|make|write|update|refactor|debug|set up|configure)\b/i
+];
 
-const HANDOFF_TEMPLATE = `── ctx handoff ──
-task:      <what was being built>
-decided:   <key decisions made and why>
-tried:     <approaches tried and rejected>
-done:      <what is complete>
-stopped:   <exactly where it stopped, file + line if known>
-next:      <the very next action to take>
-files:     <list of files actively being changed>
-errors:    <last error message if any>
-─────────────────
-Resume by continuing from "stopped" above.`;
+// Patterns that suggest errors in assistant messages
+const ERROR_PATTERNS = [
+  /error[:\s]/i, /exception[:\s]/i, /failed[:\s]/i, /cannot\s/i, /undefined\s/i, /null\s/i
+];
 
-const SYSTEM_PROMPT = `You are a context compression engine. Your job is to read an AI coding session (chat messages + git changes) and produce a dense handoff summary under 500 tokens.
-The summary will be pasted into a new AI IDE session so it can continue the work seamlessly.
-Be specific. Include file names, line numbers, error messages, and exact next steps.
-Never use vague language like "continue working" — always say exactly what to do next.
-Output only the handoff block, no preamble.
+// Patterns that suggest something was completed
+const DONE_PATTERNS = [
+  /\b(created|added|fixed|implemented|updated|done|complete|working|saved)\b/i
+];
 
-Use this exact format:
-${HANDOFF_TEMPLATE}`;
-
-function formatMessages(messages) {
-  return messages
-    .map(m => `${m.role.toUpperCase()}: ${m.content}`)
-    .join('\n\n');
+function firstSentence(text) {
+  const s = text.replace(/\n+/g, ' ').trim();
+  const end = s.search(/[.!?\n]/);
+  return end > 0 ? s.slice(0, end + 1) : s.slice(0, 120);
 }
 
-function localCompress(messages, gitState) {
-  const recent = messages.slice(-10);
-  const lastUserMsg = [...recent].reverse().find(m => m.role === 'user');
-  const lastAssistantMsg = [...recent].reverse().find(m => m.role === 'assistant');
+function extractTask(messages) {
+  // Walk user messages from the start to find what was asked to be built
+  const userMsgs = messages.filter(m => m.role === 'user');
+  for (const m of userMsgs) {
+    if (TASK_PATTERNS.some(p => p.test(m.content))) {
+      return firstSentence(m.content);
+    }
+  }
+  return userMsgs[0] ? firstSentence(userMsgs[0].content) : 'unknown';
+}
 
+function extractLastError(messages) {
+  // Walk assistant messages in reverse for the most recent error mention
+  const assistantMsgs = [...messages].reverse().filter(m => m.role === 'assistant');
+  for (const m of assistantMsgs) {
+    const lines = m.content.split('\n');
+    for (const line of lines) {
+      if (ERROR_PATTERNS.some(p => p.test(line))) {
+        return line.trim().slice(0, 150);
+      }
+    }
+  }
+  return 'none';
+}
+
+function extractDone(messages) {
+  // Find the most recent assistant message that describes completing something
+  const assistantMsgs = [...messages].reverse().filter(m => m.role === 'assistant');
+  for (const m of assistantMsgs) {
+    const lines = m.content.split('\n');
+    for (const line of lines) {
+      if (DONE_PATTERNS.some(p => p.test(line)) && line.length > 10) {
+        return line.trim().slice(0, 150);
+      }
+    }
+  }
+  return 'unknown';
+}
+
+function extractStopped(messages) {
+  // Last assistant message — this is where it stopped
+  const last = [...messages].reverse().find(m => m.role === 'assistant');
+  if (!last) return 'unknown';
+  // Take the last meaningful line
+  const lines = last.content.split('\n').map(l => l.trim()).filter(Boolean);
+  return lines[lines.length - 1]?.slice(0, 150) ?? 'unknown';
+}
+
+function extractNext(messages) {
+  // Last user message — this is what was being asked next
+  const last = [...messages].reverse().find(m => m.role === 'user');
+  if (!last) return 'unknown';
+  return firstSentence(last.content);
+}
+
+export async function compress({ messages, gitState, ide, projectPath }) {
   const filesLine = gitState.changedFiles.length
     ? gitState.changedFiles.join(', ')
     : 'none detected';
 
   const errorsLine = gitState.errors
-    ? gitState.errors.split('\n')[0]
-    : 'none';
+    ? gitState.errors.split('\n').find(l => l.trim()) ?? 'none'
+    : extractLastError(messages);
+
+  const recentMsgs = messages.slice(-30);
 
   return `── ctx handoff ──
-task:      ${lastUserMsg ? lastUserMsg.content.slice(0, 120) : 'unknown'}
-decided:   (no API key — set GEMINI_API_KEY for full compression)
+task:      ${extractTask(messages)}
+decided:   see last assistant message
 tried:     unknown
-done:      ${gitState.recentCommits ? gitState.recentCommits.split('\n')[0] : 'unknown'}
-stopped:   ${lastAssistantMsg ? lastAssistantMsg.content.slice(0, 120) : 'unknown'}
-next:      continue from last assistant message above
+done:      ${extractDone(recentMsgs)}
+stopped:   ${extractStopped(recentMsgs)}
+next:      ${extractNext(recentMsgs)}
 files:     ${filesLine}
 errors:    ${errorsLine}
 ─────────────────
 Resume by continuing from "stopped" above.`;
-}
-
-export async function compress({ messages, gitState, ide, projectPath }) {
-  const apiKey = await getGeminiKey();
-
-  if (!apiKey) {
-    console.error('  ⚠ No Gemini API key — using local compression (less accurate)');
-    return localCompress(messages, gitState);
-  }
-
-  const userPrompt = `IDE: ${ide}
-Project: ${projectPath}
-
-RECENT CONVERSATION (last ${messages.length} messages):
-${formatMessages(messages)}
-
-GIT STATE:
-Changed files: ${gitState.changedFiles.join(', ') || 'none'}
-Recent commits: ${gitState.recentCommits || 'none'}
-Diff summary: ${gitState.diffStat || 'no changes'}
-Errors found: ${gitState.errors || 'none'}
-
-Produce the handoff summary now.`;
-
-  try {
-    const genai = new GoogleGenerativeAI(apiKey);
-    const model = genai.getGenerativeModel({
-      model: 'gemini-2.0-flash',
-      systemInstruction: SYSTEM_PROMPT
-    });
-
-    const result = await model.generateContent(userPrompt);
-    return result.response.text().trim();
-  } catch (err) {
-    console.error(`  ⚠ Gemini compression failed: ${err.message} — falling back to local`);
-    return localCompress(messages, gitState);
-  }
 }
