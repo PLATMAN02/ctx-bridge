@@ -1,0 +1,9 @@
+
+# ctx-bridge snapshots
+.ctx/
+
+# dependencies
+node_modules/
+
+# env
+.env

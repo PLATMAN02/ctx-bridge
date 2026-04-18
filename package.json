@@ -1,0 +1,12 @@
+{
+  "name": "ctx-bridge",
+  "version": "0.1.0",
+  "description": "Seamless AI context transfer across IDEs",
+  "bin": { "ctx": "./bin/ctx.js" },
+  "type": "module",
+  "dependencies": {
+    "commander": "^11.0.0",
+    "clipboardy": "^4.0.0",
+    "@google/generative-ai": "^0.21.0"
+  }
+}
