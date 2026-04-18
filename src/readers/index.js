@@ -6,19 +6,27 @@ import os from 'os';
 
 const CLAUDE_PROJECTS_DIR = path.join(os.homedir(), '.claude', 'projects');
 const CODEX_HISTORY_DIR = path.join(os.homedir(), '.codex', 'history');
+const ANTIGRAVITY_BRAIN_DIR = path.join(os.homedir(), '.gemini', 'antigravity', 'brain');
 
 const RECENT_THRESHOLD_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+async function dirExists(dir) {
+  try {
+    await fs.stat(dir);
+    return true;
+  } catch {
+    return false;
+  }
+}
 
 async function hasRecentFiles(dir, maxAgeMs = RECENT_THRESHOLD_MS) {
   try {
     const entries = await fs.readdir(dir);
     for (const entry of entries) {
       try {
-        // For claude projects, check subdirectories too
         const full = path.join(dir, entry);
         const stat = await fs.stat(full);
         if (stat.isDirectory()) {
-          // Check inside for conversation files
           const sub = await fs.readdir(full).catch(() => []);
           for (const sub_entry of sub) {
             const subFull = path.join(full, sub_entry);
@@ -26,12 +34,10 @@ async function hasRecentFiles(dir, maxAgeMs = RECENT_THRESHOLD_MS) {
               const subStat = await fs.stat(subFull).catch(() => null);
               if (subStat && Date.now() - subStat.mtime.getTime() < maxAgeMs) return true;
             }
-            // Also check conversations subdirectory
             if (sub_entry === 'conversations') {
-              const convDir = subFull;
-              const convFiles = await fs.readdir(convDir).catch(() => []);
+              const convFiles = await fs.readdir(subFull).catch(() => []);
               for (const cf of convFiles) {
-                const cfStat = await fs.stat(path.join(convDir, cf)).catch(() => null);
+                const cfStat = await fs.stat(path.join(subFull, cf)).catch(() => null);
                 if (cfStat && Date.now() - cfStat.mtime.getTime() < maxAgeMs) return true;
               }
             }
@@ -71,7 +77,19 @@ export async function readMessages(projectPath, forceStdin = false) {
     }
   }
 
-  // 2. Check Codex CLI
+  // 2. Check Antigravity
+  const hasAntigravity = await dirExists(ANTIGRAVITY_BRAIN_DIR);
+  if (hasAntigravity) {
+    try {
+      const { readMessages: agRead } = await import('./antigravity.js');
+      const result = await agRead(projectPath);
+      if (result.messages.length > 0) return result;
+    } catch (err) {
+      console.error(`  ⚠ Antigravity reader failed: ${err.message}`);
+    }
+  }
+
+  // 3. Check Codex CLI
   const hasCodexActivity = await hasRecentFiles(CODEX_HISTORY_DIR);
   if (hasCodexActivity) {
     try {
@@ -83,7 +101,7 @@ export async function readMessages(projectPath, forceStdin = false) {
     }
   }
 
-  // 3. Fallback to stdin paste
+  // 4. Fallback to stdin paste
   console.log('  No local IDE history detected — falling back to paste input.');
   const { readMessages: pasteRead } = await import('./paste-input.js');
   return pasteRead(projectPath);
