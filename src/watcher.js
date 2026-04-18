@@ -1,4 +1,4 @@
-// Polling loop that auto-snapshots when message count grows or git changes
+// Polling loop that updates context snapshot on every new message or git change
 
 import { readMessages } from './readers/index.js';
 import { readGitState } from './git-reader.js';
@@ -6,17 +6,18 @@ import { compress } from './compressor.js';
 import { save, list } from './snapshot.js';
 import { readConfig, writeConfig } from './config.js';
 
-const POLL_INTERVAL_MS = 30_000;       // 30 seconds
-const GIT_SNAPSHOT_MIN_MS = 5 * 60_000; // 5 minutes between git-triggered snapshots
+const POLL_INTERVAL_MS = 1_000; // 1 second
 
 let snapshotCount = 0;
 let lastMessageCount = 0;
-let lastSnapshotAt = 0;
 let lastGitDiffStat = '';
+let isSnapshotting = false; // prevent overlapping snapshots
 
 async function takeSnapshot(ide, projectPath, reason) {
+  if (isSnapshotting) return;
+  isSnapshotting = true;
   try {
-    const [{ messages, sessionId }, gitState] = await Promise.all([
+    const [{ messages }, gitState] = await Promise.all([
       readMessages(projectPath),
       readGitState(projectPath)
     ]);
@@ -26,7 +27,6 @@ async function takeSnapshot(ide, projectPath, reason) {
 
     snapshotCount++;
     lastMessageCount = messages.length;
-    lastSnapshotAt = Date.now();
     lastGitDiffStat = gitState.diffStat;
 
     await writeConfig({
@@ -35,48 +35,44 @@ async function takeSnapshot(ide, projectPath, reason) {
     });
 
     const fileCount = gitState.changedFiles.length;
-    console.log(
-      `  ✓ snapshot #${snapshotCount} saved — ${messages.length} msgs · ${fileCount} files  [${reason}]`
+    process.stdout.write(
+      `\r  ✓ context updated — ${messages.length} msgs · ${fileCount} files  [${reason}]  \n`
     );
   } catch (err) {
     console.error(`  ✗ snapshot failed: ${err.message}`);
+  } finally {
+    isSnapshotting = false;
   }
 }
 
-export async function startWatcher(ide, projectPath, snapshotInterval = 10) {
+export async function startWatcher(ide, projectPath) {
   const config = await readConfig();
   lastMessageCount = config?.lastSnapshotMessageCount ?? 0;
-  lastSnapshotAt = config?.lastSnapshotAt ? new Date(config.lastSnapshotAt).getTime() : 0;
 
   const existingSnapshots = await list();
   snapshotCount = existingSnapshots.length;
 
-  console.log(`  Polling every ${POLL_INTERVAL_MS / 1000}s — snapshot every ${snapshotInterval} messages`);
+  console.log(`  Polling every 1s — updating on every new message or git change`);
 
   const poll = async () => {
     try {
       const { messages } = await readMessages(projectPath);
       const gitState = await readGitState(projectPath);
-      const now = Date.now();
 
-      const msgDelta = messages.length - lastMessageCount;
+      const newMessages = messages.length !== lastMessageCount;
       const gitChanged = gitState.diffStat !== lastGitDiffStat;
-      const timeSinceSnapshot = now - lastSnapshotAt;
 
-      const shouldSnapshotMessages = msgDelta >= snapshotInterval;
-      const shouldSnapshotGit = gitChanged && timeSinceSnapshot >= GIT_SNAPSHOT_MIN_MS;
-
-      if (shouldSnapshotMessages) {
-        await takeSnapshot(ide, projectPath, `+${msgDelta} messages`);
-      } else if (shouldSnapshotGit) {
-        await takeSnapshot(ide, projectPath, 'git changes');
+      if (newMessages) {
+        await takeSnapshot(ide, projectPath, `${messages.length} msgs`);
+      } else if (gitChanged) {
+        await takeSnapshot(ide, projectPath, 'git changed');
       }
     } catch (err) {
-      console.error(`  ⚠ poll error: ${err.message}`);
+      // silent — don't spam terminal on every poll error
     }
   };
 
-  // Take an initial snapshot on start
+  // Initial snapshot on start
   await takeSnapshot(ide, projectPath, 'initial');
 
   setInterval(poll, POLL_INTERVAL_MS);

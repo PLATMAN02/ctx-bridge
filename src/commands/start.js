@@ -5,7 +5,6 @@ import { writeConfig } from '../config.js';
 import { startWatcher } from '../watcher.js';
 
 export async function run(opts = {}) {
-  const snapshotInterval = parseInt(opts.interval ?? '10', 10);
   const projectPath = process.cwd();
 
   console.log('\n  ctx — Context Bridge\n');
@@ -22,17 +21,15 @@ export async function run(opts = {}) {
     ide = 'paste-input';
   }
 
-  console.log(`  IDE detected: ${ide}`);
-  console.log(`  Snapshot interval: every ${snapshotInterval} messages\n`);
+  console.log(`  IDE detected: ${ide}\n`);
 
   await writeConfig({
     ide,
     projectPath,
-    startedAt: new Date().toISOString(),
-    snapshotInterval
+    startedAt: new Date().toISOString()
   });
 
   console.log('  Monitoring started. Press Ctrl+C to stop.\n');
 
-  await startWatcher(ide, projectPath, snapshotInterval);
+  await startWatcher(ide, projectPath);
 }
