@@ -1,15 +1,26 @@
 {
   "name": "ctx-bridge",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Seamless AI context transfer across IDEs",
-  "bin": { "ctx": "./bin/ctx.js" },
+  "bin": {
+    "ctx": "./bin/ctx.js"
+  },
   "type": "module",
   "license": "MIT",
   "repository": {
     "type": "git",
     "url": "https://github.com/PLATMAN02/ctx-bridge.git"
   },
-  "keywords": ["ai", "context", "ide", "claude", "cursor", "codex", "handoff", "cli"],
+  "keywords": [
+    "ai",
+    "context",
+    "ide",
+    "claude",
+    "cursor",
+    "codex",
+    "handoff",
+    "cli"
+  ],
   "dependencies": {
     "commander": "^11.0.0",
     "clipboardy": "^4.0.0"
