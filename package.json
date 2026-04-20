@@ -1,6 +1,6 @@
 {
   "name": "ctx-bridge",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Seamless AI context transfer across IDEs",
   "bin": {
     "ctx": "./bin/ctx.js"
