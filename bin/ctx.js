@@ -2,13 +2,17 @@
 // CLI entry point — registers start, paste, and status commands via commander
 
 import { Command } from 'commander';
+import { createRequire } from 'module';
+
+const require = createRequire(import.meta.url);
+const { version } = require('../package.json');
 
 const program = new Command();
 
 program
   .name('ctx')
   .description('Context Bridge — seamless AI context transfer across IDEs')
-  .version('0.1.0');
+  .version(version);
 
 program
   .command('start')
