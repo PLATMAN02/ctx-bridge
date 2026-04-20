@@ -1,6 +1,10 @@
-# ctx — Context Bridge
+# ctx-bridge
 
-Never lose your AI coding session again. ctx monitors your IDE session automatically and generates a compressed handoff prompt so you can resume in any AI IDE instantly.
+> Never lose your AI coding session again.
+
+When you hit a rate limit in an AI coding IDE, all your context — what you were building, decisions made, errors hit — is gone. `ctx` monitors your session automatically and generates a compressed handoff prompt so you can resume in any IDE instantly.
+
+---
 
 ## Install
 
@@ -8,70 +12,166 @@ Never lose your AI coding session again. ctx monitors your IDE session automatic
 npm install -g ctx-bridge
 ```
 
-## Usage
+---
 
-### Start monitoring
+## Quick Start
 
+**1. Start monitoring in your project:**
 ```bash
+cd your-project
 ctx start
 ```
 
-Starts a background watcher that auto-snapshots every 10 messages and on git changes.
+Runs in the background, updating your context snapshot every time a new message arrives.
 
-### Generate handoff prompt
-
+**2. When you hit a rate limit — run:**
 ```bash
 ctx paste
 ```
 
-Compresses your session into a tight handoff prompt and copies it to clipboard. Paste it into any new IDE session to resume exactly where you left off.
+Handoff prompt is instantly copied to your clipboard. Paste it into any new IDE session and continue exactly where you left off.
 
-Works even if `ctx start` was never run — it does a fresh read on demand.
+---
 
-### Check status
+## Commands
 
-```bash
-ctx status
-```
+| Command | Description |
+|---------|-------------|
+| `ctx start` | Start background session monitoring |
+| `ctx paste` | Generate handoff prompt + copy to clipboard |
+| `ctx status` | Show snapshot history and session info |
 
-Shows current IDE, snapshot count, last snapshot time, and recent snapshot history.
+---
 
-## How it works
+## How It Works
 
-- **Reads locally**: Finds your IDE's conversation files on disk (no network needed)
-- **Compresses with AI**: Uses Claude Haiku to distill your session into a ~500-token handoff block
-- **Clipboard-ready**: `ctx paste` puts the handoff prompt straight on your clipboard
+1. **Reads locally** — Finds your IDE's conversation files on disk. No network needed, no API calls.
+2. **Monitors continuously** — Polls every 1 second. Updates snapshot the moment a new message or git change is detected.
+3. **Compresses with heuristics** — Extracts task, decisions, last error, and next step from your session into a ~500 token handoff block.
+4. **Clipboard ready** — `ctx paste` puts the handoff prompt straight on your clipboard. Just Cmd+V in your new session.
+
+---
 
 ## Supported IDEs
 
-| IDE | Source | Mode |
-|-----|--------|------|
-| Claude Code | `~/.claude/projects/*/conversations/*.jsonl` | file |
-| Codex CLI | `~/.codex/history/*.json` | file |
-| Codex App | stdin | paste |
-| Cursor | (planned) | file |
-| Windsurf | stdin | paste |
-| GitHub Copilot | stdin | paste |
+| IDE | How it reads | Storage path |
+|-----|-------------|--------------|
+| **Claude Code** | File | `~/.claude/projects/*/conversations/*.jsonl` |
+| **Antigravity** (Google) | File | `~/.gemini/antigravity/brain/<session>/` |
+| **Codex CLI** | File | `~/.codex/history/*.json` |
+| **Cursor** | Paste | `ctx paste --paste` |
+| **Windsurf** | Paste | `ctx paste --paste` |
+| **GitHub Copilot** | Paste | `ctx paste --paste` |
+| **Kiro** (Amazon) | Paste | `ctx paste --paste` |
 
-For paste-mode IDEs, run `ctx paste --paste` and paste your conversation when prompted.
+For paste-mode IDEs, copy your chat, run `ctx paste --paste`, paste into terminal, press Ctrl+D.
 
-## Setup
+---
 
-Set your Anthropic API key for full AI-powered compression:
+## The Handoff Prompt
 
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
+```
+── ctx handoff ──
+task:      building authentication middleware with JWT
+decided:   JWT over sessions — simpler for mobile clients
+tried:     passport.js — too heavy, dropped it
+done:      POST /login, POST /register, JWT signing complete
+stopped:   src/middleware/auth.js line 34 — verifyToken throws on expiry
+next:      catch TokenExpiredError and return 401 with { expired: true }
+files:     src/middleware/auth.js, src/routes/users.js
+errors:    JsonWebTokenError: invalid signature
+─────────────────
+Resume by continuing from "stopped" above.
 ```
 
-Without it, ctx falls back to local compression (last 10 messages + git stat).
+Paste this into any new IDE session. The AI picks up exactly where you left off.
 
-## Adding a new IDE reader
+---
+
+## Running Inside Claude Code
+
+You can run ctx without leaving the chat:
+
+```
+! ctx paste
+```
+
+The `!` prefix runs any shell command directly in Claude Code's chat.
+
+---
+
+## Monitoring Multiple Projects
+
+Open a terminal tab per project:
+
+```bash
+# Tab 1
+cd ~/project-a && ctx start
+
+# Tab 2
+cd ~/project-b && ctx start
+```
+
+Each project has its own `.ctx/` folder. Run `ctx paste` in whichever project you need the handoff from.
+
+---
+
+## Adding a New IDE Reader
 
 1. Create `src/readers/<your-ide>.js`
-2. Export `async function readMessages(projectPath)` returning:
+2. Export:
    ```js
-   { messages: [{ role, content, timestamp }], ide, projectPath, sessionId }
+   export async function readMessages(projectPath) {
+     return {
+       messages: [{ role: 'user' | 'assistant', content: string, timestamp: number }],
+       ide: 'your-ide-name',
+       projectPath,
+       sessionId: string
+     };
+   }
    ```
-3. Add detection logic to `src/readers/index.js` (check for the IDE's history directory)
+3. Add detection logic in `src/readers/index.js` — check for the IDE's local storage directory and call your reader.
 
-That's it — the watcher, compressor, and paste command all use the reader interface automatically.
+---
+
+## What Gets Captured
+
+| Data | Source |
+|------|--------|
+| Last 50 chat messages | IDE local files |
+| Changed files | `git diff HEAD --stat` |
+| Exact file diffs | `git diff HEAD` (truncated to 3000 chars) |
+| Last 5 commits | `git log --oneline -5` |
+| Working tree state | `git status --short` |
+| Error patterns | `*.log` files in project root |
+
+---
+
+## Snapshots
+
+Snapshots are saved to `.ctx/snapshots/` in your project directory. The `.ctx/` folder is automatically added to `.gitignore`.
+
+```
+.ctx/
+  config.json          ← session config
+  snapshots/
+    1713456789.json    ← timestamped snapshots
+    latest.json        ← always points to most recent
+```
+
+---
+
+## Contributing
+
+```bash
+git clone git@github.com:PLATMAN02/ctx-bridge.git
+cd ctx-bridge
+npm install
+npm link   # makes ctx available globally from local source
+```
+
+---
+
+## License
+
+MIT
